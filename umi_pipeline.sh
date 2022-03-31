@@ -157,7 +157,7 @@ fi
 # Run run_umierrorcorrect #
 ###########################
 
-printf '\n%s %s %s\n' $GREEN "Processing fastqs..." $NC
+printf '\n%s %s %s\n' $GREEN "Processing $n_files fastqs..." $NC
 
 cd $runDir
 
@@ -170,8 +170,9 @@ do
 
   sample_name=${fastq//$find/$replace}
 
-  echo "$fastq => $sample_name"
-  echo "Running fastp for fastq: $fastq "
+  printf "%s %s %s\n" $GREEN "$fastq => $sample_name" $NC
+
+  printf '%s %s %s\n' $GREEN "Running fastp for fastq: $fastq " $NC
 
   outfile="$sample_name.filtered.fastq.gz"
 
@@ -181,7 +182,7 @@ do
     --html "$sample_name.html" \
     --trim_poly_g
 
-  echo "Running umierrorcorrect for fastq: $outfile"
+  printf '%s %s %s\n' $GREEN "Running umierrorcorrect for fastq: $outfile" $NC
 
   run_umierrorcorrect.py \
     -o $runDir/$sample_name \
