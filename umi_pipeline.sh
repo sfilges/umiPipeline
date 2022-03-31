@@ -16,6 +16,12 @@ display_help() {
     echo "   -i, --input-dir      Input directory for fastq files. Default is current working directory."
     echo "   -b  --bed            Assay regions bed file. Default assumes file is in current working directory."
     echo "   -r  --reference      Indexed reference genome"
+    echo "   -u --umi_length     UMI length, default is 12."
+    echo "   -s --spacer_length  How long is the spacer sequence? Default is 16."
+    echo "   -t  --threads        How many threads to use? Default is 16."
+    echo "   -f  --no_filtering   Do not use fastp to filter fastqs."
+    echo "   -q  --phred_score          Min Phread score to keep when using fastp to filter. Default is 15, typical values are 10, 15, 20, 30."
+    echo "   -p  --percent_low_quality  How many percent bases in a read are allowed to be below the thrshold q value. Default is 40 (0-100)"
     echo
     exit 1
 }
@@ -24,8 +30,18 @@ display_help() {
 # Check command line options #
 #############################
 
+umi_length=12
+spacer_length=16
+threads=16
+no_fastp=false
+use_bed=true
+do_filtering=true
+phred_score=15
+percent_low_quality=40
 
-while getopts 'hi:b:r:' option; do
+touch log.txt
+
+while getopts ':hfi:b:r:u:s:t:q:p:' option; do
   case "$option" in
     h | --help)
         display_help
@@ -39,6 +55,24 @@ while getopts 'hi:b:r:' option; do
         ;;
     r | --reference)
         REF=$OPTARG
+        ;;
+    f | --no_filtering)
+        do_filtering=false
+        ;;
+    u | --umi_length)
+        umi_length=$OPTARG
+        ;;
+    s | --spacer_length)
+        spacer_length=$OPTARG
+        ;;
+    t | --threads)
+        threads=$OPTARG
+        ;;
+    q | --phred_score)
+        phred_score=$OPTARG
+        ;;
+    p | --percent_low_quality)
+        percent_low_quality=$OPTARG
         ;;
     :) printf "missing argument for -%i\n" "$OPTARG" >&2
        echo "$usage" >&2
@@ -67,11 +101,11 @@ printf '%s %s %s\n' $GREEN "Checking dependencies..." $NC
 # Check if fastp is installed
 if ! command -v fastp &> /dev/null
   then
-    printf '%s %s\n' $RED "...fastp could not be found."
-    printf '%s %s\n' "Please install fastp from: " "https://github.com/OpenGene/fastp"
-    exit
+    printf '%s %s\n' $YELLOW "...fastp could not be found. No filtering will be performed."
+    printf '%s %s\n' "Please install fastp if you want to use filtering: " "https://github.com/OpenGene/fastp"
+    no_fastp=true
   else
-    printf '%s %s %s\n' $GREEN "...fastp is installed." $NC
+    printf '%s %s %s\n' $YELLOW "...fastp is installed." $NC
   fi
 
 # Check if umierrorcorrect is installed
@@ -81,7 +115,7 @@ if ! command -v run_umierrorcorrect.py &> /dev/null
     printf '%s\n' "Please install umierrorcorrect from: https://github.com/stahlberggroup/umierrorcorrect" $NC
     exit
   else
-    printf '%s %s %s\n' $GREEN "...umierrorcorrect is installed." $NC
+    printf '%s %s %s\n' $YELLOW "...umierrorcorrect is installed." $NC
   fi
 
 # Check if bwa is installed
@@ -91,10 +125,10 @@ if ! command -v bwa mem &> /dev/null
     printf ' %s\n' "Please install bwa"
     exit
   else
-    printf '%s %s %s\n' $GREEN "...bwa is installed." $NC
+    printf '%s %s %s\n' $YELLOW "...bwa is installed." $NC
   fi
 
-printf '%s %s %s\n' $GREEN "All dependcies are present." $NC
+printf '%s %s %s\n' $GREEN "All dependencies are present." $NC
 
 # Check working directory
 printf '\n%s %s %s\n' $GREEN "Checking working directory..." $NC
@@ -104,24 +138,26 @@ if [[ $FILES = "" ]]
     printf '%s %s %s %s\n' $GREEN "...set working directory to: " $NC `pwd`
     runDir=`pwd`
 else
-  printf '%s %s %s %s\n' $GREEN "...working directory is: " $NC $FILES 
+  printf '%s %s %s %s\n' $YELLOW "...working directory is: " $NC $FILES 
   runDir=$FILES
 fi
 
 # Detect fastq files
-n_files=`find $runDir -name "*.fastq.gz" | wc -l | sed 's/^ *//g'`
+n_files=`find $runDir -maxdepth 1 -name "*.fastq.gz" | wc -l | sed 's/^ *//g'`
 
-printf '%s %s %s %s\n' $GREEN "...detecting fastqs: "  $NC "$n_files fastqs files found."
+printf '%s %s %s %s\n' $YELLOW "...detecting fastqs: "  $NC "$n_files fastqs files found."
 
 # Check bed file
 printf "\n%s %s %s\n" $GREEN "Checking bed file..." $NC
+
 if [[ $BED = "" ]]
   then 
-    printf '%s %s %s\n' $YELLOW "...no bed file specified." $NC
+    printf '%s %s %s\n' $YELLOW "...no bed file specified. Running without bed annotations." $NC
+    use_bed=false
   else
     if test -f "$BED"
       then
-        printf '%s %s %s\n' $GREEN "Using assay regions from: $BED." $NC
+        printf '%s %s %s %s\n' $YELLOW "Using assay regions from:" $NC $BED
       else
         printf '%s %s %s %s\n' $RED "...specified bed file does not exist: " $NC $BED
         exit
@@ -142,7 +178,7 @@ else
       # Check if file ending matches fasta
       if [[ "$REF" =~ .*\.(fa|fasta|fn) ]]
         then
-          printf '%s %s %s %s\n' $GREEN "...using reference: " $NC "$REF."
+          printf '%s %s %s %s\n' $YELLOW "...using reference: " $NC "$REF."
       else
         printf '%s %s %s %s\n' $RED "...this does not seem to be a correct fasta file: " $NC $REF
         exit
@@ -157,7 +193,12 @@ fi
 # Run run_umierrorcorrect #
 ###########################
 
-printf '\n%s %s %s\n' $GREEN "Processing $n_files fastqs..." $NC
+printf '\n%s %s %s\n' $GREEN "Processing $n_files fastq files..." $NC
+printf '%s %s %s %s\n' $YELLOW "...using UMI length:" $NC $umi_length
+printf '%s %s %s %s\n' $YELLOW "...using spacer length:" $NC $spacer_length
+printf '%s %s %s %s\n' $YELLOW "...using threads:" $NC $threads
+printf '%s %s %s %s\n' $YELLOW "...perform filtering:" $NC $do_filtering
+printf '%s %s %s %s\n' $YELLOW "...using bed annotations:" $NC $use_bed
 
 cd $runDir
 
@@ -170,28 +211,53 @@ do
 
   sample_name=${fastq//$find/$replace}
 
-  printf "%s %s %s\n" $GREEN "$fastq => $sample_name" $NC
+  printf "\n%s %s %s %s\n" $GREEN "Changing sample name:" $NC "$fastq => $sample_name" 
 
-  printf '%s %s %s\n' $GREEN "Running fastp for fastq: $fastq " $NC
+  if $no_fastp
+    then
+      outfile=$fastq
+  else
+    if $do_filtering
+      then
+        outfile="$sample_name.filtered.fastq.gz"
 
-  outfile="$sample_name.filtered.fastq.gz"
+        printf '\n%s %s %s %s\n' $GREEN "Running fastp for fastq..." $NC $fastq
+        printf '%s %s %s %s\n' $YELLOW "...using minimum Phread score:" $NC $phred_score 
+        printf '%s %s %s %s\n' $YELLOW "...using max percent low quality reads:" $NC $percent_low_quality
 
-  fastp \
-    -i $fastq \
-    -o $outfile \
-    --html "$sample_name.html" \
-    --trim_poly_g
+        fastp \
+          -i $fastq \
+          -o $outfile \
+          --html "$sample_name.html" \
+          --trim_poly_g \
+          -q $phred_score \
+          -u $percent_low_quality
+    else
+      outfile=$fastq
+    fi
+  fi  
+  
+  printf '\n%s %s %s\n' $GREEN "Running umierrorcorrect for fastq: $outfile" $NC
 
-  printf '%s %s %s\n' $GREEN "Running umierrorcorrect for fastq: $outfile" $NC
-
-  run_umierrorcorrect.py \
-    -o $runDir/$sample_name \
-    -r1 $runDir/$outfile \
-    -r $REF \
-    -mode single \
-    -ul 12 \
-    -sl 16 \
-    -bed $BED \
-    -t 16 \
-    --remove_large_files
+  if $use_bed
+    then
+      run_umierrorcorrect.py \
+      -o $runDir/$sample_name \
+      -r1 $runDir/$outfile \
+      -r $REF \
+      -mode single \
+      -ul $umi_length \
+      -sl $spacer_length \
+      -bed $BED \
+      -t $threads
+  else
+    run_umierrorcorrect.py \
+      -o $runDir/$sample_name \
+      -r1 $runDir/$outfile \
+      -r $REF \
+      -mode single \
+      -ul $umi_length \
+      -sl $spacer_length \
+      -t $threads
+    fi
 done
