@@ -28,7 +28,7 @@ display_help() {
 
 ##############################
 # Check command line options #
-#############################
+##############################
 
 umi_length=12
 spacer_length=16
@@ -38,6 +38,8 @@ use_bed=true
 do_filtering=true
 phred_score=15
 percent_low_quality=40
+fastqc=false
+multiqc=false
 
 touch log.txt
 
@@ -91,9 +93,9 @@ GREEN=$(tput setaf 2)
 RED=$(tput setaf 1)
 NC=$(tput sgr0)
 
-#########################
+##################################
 # Check file integrity and paths #
-#########################
+##################################
 
 # Check dependencies
 printf '%s %s %s\n' $GREEN "Checking dependencies..." $NC
@@ -126,6 +128,26 @@ if ! command -v bwa mem &> /dev/null
     exit
   else
     printf '%s %s %s\n' $YELLOW "...bwa is installed." $NC
+  fi
+
+# Check if multiqc is installed
+if ! command -v multiqc &> /dev/null
+  then
+    printf '%s %s %s\n' $YELLOW "...multiqc could not be found. No merged reports will be generated." $NC
+    printf ' %s\n' "Please install multqic"
+  else
+    printf '%s %s %s\n' $YELLOW "...multiqc is installed." $NC
+    multiqc=true
+  fi
+
+# Check if fastqc is installed
+if ! command -v fastqc &> /dev/null
+  then
+    printf '%s %s %s\n' $YELLOW "...fastqc could not be found. No merged reports will be generated." $NC
+    printf ' %s\n' "Please install fastqc"
+  else
+    printf '%s %s %s\n' $YELLOW "...fastqc is installed." $NC
+    fastqc=true
   fi
 
 printf '%s %s %s\n' $GREEN "All dependencies are present." $NC
@@ -261,3 +283,26 @@ do
       -t $threads
     fi
 done
+
+###############################
+# Merging reports and cleanup #
+###############################
+
+# Generate fastqc reports
+if $fastqc
+  then
+  printf '\n%s %s %s\n' $GREEN "Running fastqc for folder: $runDir" $NC
+  fastqc $runDir/*.fastq.gz
+fi  
+
+# Move fastqc files to dedicated folder
+mkdir "$runDir/qc_reports"
+mv $runDir/*fastqc* qc_reports
+
+# Generate merged reports
+if $multiqc
+  then
+  printf '\n%s %s %s\n' $GREEN "Running multiqc for folder: $runDir" $NC
+  multiqc $runDir
+fi  
+

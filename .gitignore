@@ -1,6 +1,6 @@
 /data
 .Rhistory
-
+*.txt
 # OS generated files #
 ######################
 .DS_Store
