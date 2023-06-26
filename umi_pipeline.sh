@@ -16,8 +16,8 @@ display_help() {
     echo "   -i, --input-dir      Input directory for fastq files. Default is current working directory."
     echo "   -b  --bed            Assay regions bed file. Default assumes file is in current working directory."
     echo "   -r  --reference      Indexed reference genome"
-    echo "   -u --umi_length     UMI length, default is 12."
-    echo "   -s --spacer_length  How long is the spacer sequence? Default is 16."
+    echo "   -u  --umi_length     UMI length, default is 12."
+    echo "   -s  --spacer_length  How long is the spacer sequence? Default is 16."
     echo "   -t  --threads        How many threads to use? Default is 16."
     echo "   -f  --no_filtering   Do not use fastp to filter fastqs."
     echo "   -q  --phred_score          Min Phread score to keep when using fastp to filter. Default is 15, typical values are 10, 15, 20, 30."
@@ -30,13 +30,13 @@ display_help() {
 # Check command line options #
 ##############################
 
-umi_length=12
+umi_length=19
 spacer_length=16
 threads=16
 no_fastp=false
 use_bed=true
 do_filtering=true
-phred_score=15
+phred_score=20
 percent_low_quality=40
 fastqc=false
 multiqc=false
@@ -88,6 +88,7 @@ while getopts ':hfi:b:r:u:s:t:q:p:' option; do
 done
 shift $((OPTIND - 1))
 
+# Define colors for console output
 YELLOW=$(tput setaf 3)
 GREEN=$(tput setaf 2)
 RED=$(tput setaf 1)
@@ -212,7 +213,7 @@ else
 fi
 
 ###########################
-# Run run_umierrorcorrect #
+#   Run umierrorcorrect   #
 ###########################
 
 printf '\n%s %s %s\n' $GREEN "Processing $n_files fastq files..." $NC
@@ -222,20 +223,24 @@ printf '%s %s %s %s\n' $YELLOW "...using threads:" $NC $threads
 printf '%s %s %s %s\n' $YELLOW "...perform filtering:" $NC $do_filtering
 printf '%s %s %s %s\n' $YELLOW "...using bed annotations:" $NC $use_bed
 
+# Move to run directory
 cd $runDir
 
 # Processing fastq files
 for fastq in *.fastq.gz ;
 do
+  # If fastq file name containts "R1"
   if [[ $fastq =~ R1 ]]
     then
-    # define R1
+    # define read 1
     fq1=$fastq 
     printf '%s \n' $fq1
 
-    # define R2 by replacing R1 with R2
+    # define corresponding read 2 by replacing R1 with R2
     fq2=${fastq//R1/R2} 
     printf '%s \n' $fq2
+  else
+    continue
   fi
   
   # Define replacement
@@ -254,13 +259,15 @@ do
       then
         outfile="$sample_name.merged.filtered.fastq.gz"
 
-        printf '\n%s %s %s %s\n' $GREEN "Running fastp for fastq..." $NC $fastq
+        printf '\n%s %s %s %s\n' $GREEN "Running fastp for read 1..." $NC $fq1
+        printf '\n%s %s %s %s\n' $GREEN "Running fastp for read 2..." $NC $fq2
         printf '%s %s %s %s\n' $YELLOW "...using minimum Phread score:" $NC $phred_score 
         printf '%s %s %s %s\n' $YELLOW "...using max percent low quality reads:" $NC $percent_low_quality
 
         fastp \
           --in1=$fq1 \
           --in2=$fq2 \
+          --merge \
           --unpaired1="${sample_name}_unpaired.fastq.gz" \
           --unpaired2="${sample_name}_unpaired.fastq.gz" \
           --merged_out=$outfile \
@@ -271,7 +278,7 @@ do
           --qualified_quality_phred=$phred_score \
           --unqualified_percent_limit=$percent_low_quality \
           --detect_adapter_for_pe \
-          --thread=$ncore \
+          --thread=$threads \
           --correction \
           --n_base_limit=3 \
           --overlap_len_require=30  \
