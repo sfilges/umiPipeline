@@ -227,7 +227,18 @@ cd $runDir
 # Processing fastq files
 for fastq in *.fastq.gz ;
 do
-  [[ -f "$fastq" ]] || continue
+  if [[ $fastq =~ R1 ]]
+    then
+    # define R1
+    fq1=$fastq 
+    printf '%s \n' $fq1
+
+    # define R2 by replacing R1 with R2
+    fq2=${fastq//R1/R2} 
+    printf '%s \n' $fq2
+  fi
+  
+  # Define replacement
   find=".fastq.gz"
   replace=""
 
@@ -237,25 +248,39 @@ do
 
   if $no_fastp
     then
-      outfile=$fastq
+      outfile=$fq1
   else
     if $do_filtering
       then
-        outfile="$sample_name.filtered.fastq.gz"
+        outfile="$sample_name.merged.filtered.fastq.gz"
 
         printf '\n%s %s %s %s\n' $GREEN "Running fastp for fastq..." $NC $fastq
         printf '%s %s %s %s\n' $YELLOW "...using minimum Phread score:" $NC $phred_score 
         printf '%s %s %s %s\n' $YELLOW "...using max percent low quality reads:" $NC $percent_low_quality
 
         fastp \
-          -i $fastq \
-          -o $outfile \
-          --html "$sample_name.html" \
+          --in1=$fq1 \
+          --in2=$fq2 \
+          --unpaired1="${sample_name}_unpaired.fastq.gz" \
+          --unpaired2="${sample_name}_unpaired.fastq.gz" \
+          --merged_out=$outfile \
+          --failed_out="${sample_name}_failed.fastq.gz" \
+          --html "${sample_name}.html" \
           --trim_poly_g \
-          -q $phred_score \
-          -u $percent_low_quality
+          --trim_poly_x \
+          --qualified_quality_phred=$phred_score \
+          --unqualified_percent_limit=$percent_low_quality \
+          --detect_adapter_for_pe \
+          --thread=$ncore \
+          --correction \
+          --n_base_limit=3 \
+          --overlap_len_require=30  \
+          --length_required=100 \
+          --json="${sample_name}.json" \
+          --html="${sample_name}.html" \
+          --report_title="${sample_name}"
     else
-      outfile=$fastq
+      outfile=$fq1
     fi
   fi  
   
