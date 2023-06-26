@@ -22,6 +22,7 @@ display_help() {
     echo "   -f  --no_filtering   Do not use fastp to filter fastqs."
     echo "   -q  --phred_score          Min Phread score to keep when using fastp to filter. Default is 15, typical values are 10, 15, 20, 30."
     echo "   -p  --percent_low_quality  How many percent bases in a read are allowed to be below the thrshold q value. Default is 40 (0-100)"
+    echo "   -e  --no-paired-end        Should paired-end reads be used. Default is yes, if the flag is set, only R1 will be used."       
     echo
     exit 1
 }
@@ -30,6 +31,7 @@ display_help() {
 # Check command line options #
 ##############################
 
+paired_end=true
 umi_length=19
 spacer_length=16
 threads=16
@@ -43,7 +45,7 @@ multiqc=false
 
 touch log.txt
 
-while getopts ':hfi:b:r:u:s:t:q:p:' option; do
+while getopts ':hfi:b:r:u:s:t:q:p:e:' option; do
   case "$option" in
     h | --help)
         display_help
@@ -75,6 +77,9 @@ while getopts ':hfi:b:r:u:s:t:q:p:' option; do
         ;;
     p | --percent_low_quality)
         percent_low_quality=$OPTARG
+        ;;
+    e | --no-paired-end)
+        paired_end=false
         ;;
     :) printf "missing argument for -%i\n" "$OPTARG" >&2
        echo "$usage" >&2
@@ -292,7 +297,7 @@ do
   fi  
   
   printf '\n%s %s %s\n' $GREEN "Running umierrorcorrect for fastq: $outfile" $NC
-
+  
   if $use_bed
     then
       run_umierrorcorrect.py \
