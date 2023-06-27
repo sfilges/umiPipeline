@@ -3,8 +3,9 @@
 # A wrapper script for running umierrorcorrect on multiple samples in the same
 # directory. Requires '.fastq.gz' files as input and generates output folders in
 # the same directory as input files. Sample names are fastq names without
-# the file ending '.fastq.gz'. Requires an assay_regions.bed file in the same
-# folder as the fastqs.
+# the file ending '.fastq.gz'. Optionally an assay_regions.bed file can be provided
+# for annotation. The script handles both single-end and paired-end data, as well
+# as optional paired-read-merging and quality filtering using fastp.
 
 #########################
 # The command line help #
@@ -28,7 +29,7 @@ display_help() {
 }
 
 ##############################
-# Check command line options #
+#   Initialize parameters    #
 ##############################
 
 paired_end=true
@@ -37,13 +38,18 @@ spacer_length=16
 threads=16
 no_fastp=false
 use_bed=true
-do_filtering=true
+filtering=true
 phred_score=20
 percent_low_quality=40
 fastqc=false
 multiqc=false
 
+# Initialize log file
 touch log.txt
+
+##############################
+# Check command line options #
+##############################
 
 while getopts ':hfi:b:r:u:s:t:q:p:e:' option; do
   case "$option" in
@@ -61,7 +67,7 @@ while getopts ':hfi:b:r:u:s:t:q:p:e:' option; do
         REF=$OPTARG
         ;;
     f | --no_filtering)
-        do_filtering=false
+        filtering=false
         ;;
     u | --umi_length)
         umi_length=$OPTARG
@@ -234,91 +240,266 @@ cd $runDir
 # Processing fastq files
 for fastq in *.fastq.gz ;
 do
-  # If fastq file name containts "R1"
+  # If fastq file name contains "R1"
   if [[ $fastq =~ R1 ]]
     then
-    # define read 1
-    fq1=$fastq 
-    printf '%s \n' $fq1
+    if $paired_end
+      then
+      # define read 1
+      fq1=$fastq 
+      printf '%s \n' $fq1
 
-    # define corresponding read 2 by replacing R1 with R2
-    fq2=${fastq//R1/R2} 
-    printf '%s \n' $fq2
+      # define corresponding read 2 by replacing R1 with R2
+      fq2=${fastq//R1/R2} 
+      printf '%s \n' $fq2
+    else
+      # use only read 1
+      fq1=$fastq
+      printf '%s \n' $fq1
+    fi 
   else
+    # If fastq file name does not contain "R1" continue with the next file
     continue
   fi
   
   # Define replacement
-  find=".fastq.gz"
+  find="_R1_001.fastq.gz"
   replace=""
 
-  sample_name=${fastq//$find/$replace}
+  # Simplify sample name
+  sample_name=${fq1//$find/$replace}
 
-  printf "\n%s %s %s %s\n" $GREEN "Changing sample name:" $NC "$fastq => $sample_name" 
+  printf "\n%s %s %s %s\n" $GREEN "Changing sample name:" $NC "$fq1 => $sample_name" 
 
+  # Run filtering and read merging
   if $no_fastp
     then
-      outfile=$fq1
+      # If fastp is not installed, print note to console
+      printf "\n%s\n" $YELLOW "Fastp is not installed."
+
+      if $paired_end
+        then
+        # If data is paired-end
+        printf "%s\n" $GREEN "Running UMIErrorCorrect in paired-end mode."
+
+        if $use_bed
+          then
+            printf "%s\n" $GREEN "Using bed file."
+
+            run_umierrorcorrect.py \
+              -o $runDir/$sample_name \
+              -r1 $runDir/$fq1 \
+              -r2 $runDir/$fq2 \
+              -r $REF \
+              -mode paired \
+              -ul $umi_length \
+              -sl $spacer_length \
+              -bed $BED \
+              -t $threads
+          else
+            printf "%s\n" $YELLOW "NOT using bed file. This is not recommended."
+
+            run_umierrorcorrect.py \
+              -o $runDir/$sample_name \
+              -r1 $runDir/$fq1 \
+              -r2 $runDir/$fq2 \
+              -r $REF \
+              -mode paired \
+              -ul $umi_length \
+              -sl $spacer_length \
+              -t $threads
+          fi
+        else
+          # If data is not paired-end, use only R1
+          printf "%s\n" $GREEN "Running UMIErrorCorrect in single-end mode."
+
+          if $use_bed
+            then
+              printf "%s\n" $GREEN "Using bed file."
+
+              run_umierrorcorrect.py \
+                -o $runDir/$sample_name \
+                -r1 $runDir/$fq1 \
+                -r $REF \
+                -mode single \
+                -ul $umi_length \
+                -sl $spacer_length \
+                -bed $BED \
+                -t $threads
+          else
+            printf "%s\n" $YELLOW "NOT using bed file. This is not recommended."
+
+            run_umierrorcorrect.py \
+              -o $runDir/$sample_name \
+              -r1 $runDir/$fq1 \
+              -r $REF \
+              -mode single \
+              -ul $umi_length \
+              -sl $spacer_length \
+              -t $threads
+          fi
+        fi
   else
-    if $do_filtering
+    if $filtering
       then
-        outfile="$sample_name.merged.filtered.fastq.gz"
+        if $paired_end
+        then
+          printf '\n%s %s %s %s\n' $GREEN "Running fastp in paired-end mode."
+          printf '%s %s %s %s\n' $GREEN "Using read 1..." $NC $fq1
+          printf '%s %s %s %s\n' $GREEN "Using read 2..." $NC $fq2
+          printf '%s %s %s %s\n' $YELLOW "...using minimum Phread score:" $NC $phred_score 
+          printf '%s %s %s %s\n' $YELLOW "...using max percent low quality reads:" $NC $percent_low_quality
 
-        printf '\n%s %s %s %s\n' $GREEN "Running fastp for read 1..." $NC $fq1
-        printf '\n%s %s %s %s\n' $GREEN "Running fastp for read 2..." $NC $fq2
-        printf '%s %s %s %s\n' $YELLOW "...using minimum Phread score:" $NC $phred_score 
-        printf '%s %s %s %s\n' $YELLOW "...using max percent low quality reads:" $NC $percent_low_quality
+          # Define merged and filtered output file
+          outfile="$sample_name.merged.filtered.fastq.gz"
 
-        fastp \
-          --in1=$fq1 \
-          --in2=$fq2 \
-          --merge \
-          --unpaired1="${sample_name}_unpaired.fastq.gz" \
-          --unpaired2="${sample_name}_unpaired.fastq.gz" \
-          --merged_out=$outfile \
-          --failed_out="${sample_name}_failed.fastq.gz" \
-          --html "${sample_name}.html" \
-          --trim_poly_g \
-          --trim_poly_x \
-          --qualified_quality_phred=$phred_score \
-          --unqualified_percent_limit=$percent_low_quality \
-          --detect_adapter_for_pe \
-          --thread=$threads \
-          --correction \
-          --n_base_limit=3 \
-          --overlap_len_require=30  \
-          --length_required=100 \
-          --json="${sample_name}.json" \
-          --html="${sample_name}.html" \
-          --report_title="${sample_name}"
-    else
-      outfile=$fq1
-    fi
-  fi  
+          # Run fastp
+          fastp \
+            --in1=$fq1 \
+            --in2=$fq2 \
+            --merge \
+            --unpaired1="${sample_name}_unpaired.fastq.gz" \
+            --unpaired2="${sample_name}_unpaired.fastq.gz" \
+            --merged_out=$outfile \
+            --failed_out="${sample_name}_failed.fastq.gz" \
+            --html "${sample_name}.html" \
+            --trim_poly_g \
+            --trim_poly_x \
+            --qualified_quality_phred=$phred_score \
+            --unqualified_percent_limit=$percent_low_quality \
+            --detect_adapter_for_pe \
+            --thread=$threads \
+            --correction \
+            --n_base_limit=3 \
+            --overlap_len_require=30  \
+            --length_required=100 \
+            --json="${sample_name}.json" \
+            --html="${sample_name}.html" \
+            --report_title="${sample_name}"
+
+          else 
+            printf '\n%s %s %s %s\n' $GREEN "Running fastp in single-end mode."
+            printf '%s %s %s %s\n' $GREEN "Using read 1..." $NC $fq1
+            printf '%s %s %s %s\n' $YELLOW "...using minimum Phread score:" $NC $phred_score 
+            printf '%s %s %s %s\n' $YELLOW "...using max percent low quality reads:" $NC $percent_low_quality
+
+            # Define filtered output file
+            outfile="$sample_name.filtered.fastq.gz"
+
+            fastp \
+            --in1=$fq1 \
+            --out1=$outfile \
+            --failed_out="${sample_name}_failed.fastq.gz" \
+            --html "${sample_name}.html" \
+            --trim_poly_g \
+            --trim_poly_x \
+            --qualified_quality_phred=$phred_score \
+            --unqualified_percent_limit=$percent_low_quality \
+            --detect_adapter_for_pe \
+            --thread=$threads \
+            --correction \
+            --n_base_limit=3 \
+            --length_required=100 \
+            --json="${sample_name}.json" \
+            --html="${sample_name}.html" \
+            --report_title="${sample_name}"
+          fi
+
+          printf '\n%s %s %s\n' $GREEN "Running umierrorcorrect for fastq: $outfile" $NC
+          printf "%s\n" $GREEN "Running UMIErrorCorrect in single-end mode."
   
-  printf '\n%s %s %s\n' $GREEN "Running umierrorcorrect for fastq: $outfile" $NC
+          if $use_bed
+          then
+            run_umierrorcorrect.py \
+              -o $runDir/$sample_name \
+              -r1 $runDir/$outfile \
+              -r $REF \
+              -mode single \
+              -ul $umi_length \
+              -sl $spacer_length \
+              -bed $BED \
+              -t $threads
+          else
+            run_umierrorcorrect.py \
+              -o $runDir/$sample_name \
+              -r1 $runDir/$outfile \
+              -r $REF \
+              -mode single \
+              -ul $umi_length \
+              -sl $spacer_length \
+              -t $threads
+          fi
+        else
+          # If fastp is not used, print note to console
+          printf "\n%s\n" $YELLOW "Fastp ist not used for filtering."
+
+          # If data is paired-end
+          if $paired_end
+            then
+            printf "%s\n" $GREEN "Running UMIErrorCorrect in paired-end mode."
+
+            if $use_bed
+              then
+                printf "%s\n" $GREEN "Using bed file."
+
+                run_umierrorcorrect.py \
+                  -o $runDir/$sample_name \
+                  -r1 $runDir/$fq1 \
+                  -r2 $runDir/$fq2 \
+                  -r $REF \
+                  -mode paired \
+                  -ul $umi_length \
+                  -sl $spacer_length \
+                  -bed $BED \
+                  -t $threads
+              else
+                printf "%s\n" $YELLOW "NOT using bed file. This is not recommended."
+
+                run_umierrorcorrect.py \
+                  -o $runDir/$sample_name \
+                  -r1 $runDir/$fq1 \
+                  -r2 $runDir/$fq2 \
+                  -r $REF \
+                  -mode paired \
+                  -ul $umi_length \
+                  -sl $spacer_length \
+                  -t $threads
+              fi
+            else
+              # If data is not paired-end, use only R1
+              printf "%s\n" $GREEN "Running UMIErrorCorrect in single-end mode."
+
+              if $use_bed
+                then
+                  printf "%s\n" $GREEN "Using bed file."
+
+                  run_umierrorcorrect.py \
+                    -o $runDir/$sample_name \
+                    -r1 $runDir/$fq1 \
+                    -r $REF \
+                    -mode single \
+                    -ul $umi_length \
+                    -sl $spacer_length \
+                    -bed $BED \
+                    -t $threads
+              else
+                printf "%s\n" $YELLOW "NOT using bed file. This is not recommended."
+
+                run_umierrorcorrect.py \
+                  -o $runDir/$sample_name \
+                  -r1 $runDir/$fq1 \
+                  -r $REF \
+                  -mode single \
+                  -ul $umi_length \
+                  -sl $spacer_length \
+                  -t $threads
+              fi
+            fi
+
+
+      fi
+    fi  
   
-  if $use_bed
-    then
-      run_umierrorcorrect.py \
-      -o $runDir/$sample_name \
-      -r1 $runDir/$outfile \
-      -r $REF \
-      -mode single \
-      -ul $umi_length \
-      -sl $spacer_length \
-      -bed $BED \
-      -t $threads
-  else
-    run_umierrorcorrect.py \
-      -o $runDir/$sample_name \
-      -r1 $runDir/$outfile \
-      -r $REF \
-      -mode single \
-      -ul $umi_length \
-      -sl $spacer_length \
-      -t $threads
-    fi
 done
 
 ###############################
