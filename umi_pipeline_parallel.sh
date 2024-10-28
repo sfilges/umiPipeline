@@ -1,36 +1,47 @@
 #!/bin/bash
 
-# Display help function
+# A wrapper script for batch processing of paired-end FASTQ files using fastp and umierrorcorrect.
+# This script takes paired-end .fastq.gz files in the specified directory, applies filtering and merging,
+# and performs UMI error correction. Output files are created in the same directory as the input files.
+
+#########################
+# The command line help #
+#########################
 display_help() {
-    echo "$(basename "$0") [-h] [-i n] [options]" >&2
+    echo "Usage: $(basename "$0") [options]" >&2
     echo
-    echo "   -h, --help           Display this helpful screen."
-    echo "   -i, --input-dir      Input directory for fastq files. Default is current working directory."
-    echo "   -b  --bed            Assay regions bed file. Default assumes file is in current working directory."
-    echo "   -r  --reference      Indexed reference genome"
-    echo "   -u  --umi_length     UMI length, default is 12."
-    echo "   -s  --spacer_length  Spacer sequence length. Default is 16."
-    echo "   -t  --threads        Number of parallel jobs to run. Default is 4."
-    echo "   -f  --no_filtering   Do not use fastp to filter fastqs."
-    echo "   -q  --phred_score    Min Phred score to keep with fastp filtering. Default is 20."
-    echo "   -p  --percent_low_quality  Max percentage of low-quality bases per read. Default is 40."
+    echo "Options:"
+    echo "   -h, --help                  Display this help message."
+    echo "   -i, --input-dir             Input directory containing FASTQ files. Default is the current directory."
+    echo "   -b, --bed                   Path to the assay regions BED file for umierrorcorrect. Default assumes it's in the current directory."
+    echo "   -r, --reference             Path to the indexed reference genome."
+    echo "   -u, --umi_length            Length of the Unique Molecular Identifier (UMI). Default is 12."
+    echo "   -s, --spacer_length         Spacer sequence length between reads. Default is 16."
+    echo "   -t, --threads               Number of parallel jobs to run. Default is 4."
+    echo "   -f, --no_filtering          Skip fastp filtering step for FASTQ files."
+    echo "   -q, --phred_score           Minimum Phred score threshold for quality filtering with fastp. Default is 20."
+    echo "   -p, --percent_low_quality   Maximum percentage of low-quality bases per read. Default is 40."
     echo
     exit 1
 }
 
-# Default parameter values
-umi_length=19
+##########################
+# Default Parameter Values
+##########################
+umi_length=12
 spacer_length=16
-threads=4  # Adjust for parallelism, not necessarily max system cores
+threads=4
 do_filtering=true
 use_bed=true
 phred_score=20
 percent_low_quality=40
 
-# Parse command line optionsq
+################################
+# Parse Command-Line Options
+################################
 while getopts ':hfi:b:r:u:s:t:q:p:' option; do
   case "$option" in
-    h | --help) display_help; exit 0 ;;
+    h | --help) display_help ;;
     i | --input-dir) FILES=$OPTARG ;;
     b | --bed) BED=$OPTARG ;;
     r | --reference) REF=$OPTARG ;;
@@ -40,44 +51,50 @@ while getopts ':hfi:b:r:u:s:t:q:p:' option; do
     t | --threads) threads=$OPTARG ;;
     q | --phred_score) phred_score=$OPTARG ;;
     p | --percent_low_quality) percent_low_quality=$OPTARG ;;
-    :) echo "Missing argument for -$OPTARG" >&2; exit 1 ;;
-    \?) echo "Illegal option: -$OPTARG" >&2; exit 1 ;;
+    :) echo "Error: Missing argument for -$OPTARG" >&2; exit 1 ;;
+    \?) echo "Error: Invalid option -$OPTARG" >&2; exit 1 ;;
   esac
 done
 shift $((OPTIND - 1))
 
-# Set working directory
+# Set input directory, defaulting to current directory if not provided
 runDir=${FILES:-$(pwd)}
 
-# Dependency check
-printf "Checking dependencies...\n"
+##############################
+# Dependency Checks
+##############################
+echo "Checking for required dependencies..."
 for tool in fastp run_umierrorcorrect.py bwa multiqc fastqc; do
   if ! command -v "$tool" &> /dev/null; then
-    echo "$tool could not be found. Please install $tool."
+    echo "Error: $tool not found. Please install $tool."
     exit 1
   fi
 done
 echo "All dependencies are present."
 
-# Check bed file existence if specified
-if [[ $BED != "" ]] && [[ ! -f "$BED" ]]; then
-  echo "Specified bed file does not exist: $BED"
+# Verify BED file and reference genome, if specified
+if [[ -n $BED && ! -f $BED ]]; then
+  echo "Error: Specified BED file does not exist: $BED"
+  exit 1
+fi
+if [[ -z $REF || ! -f $REF ]]; then
+  echo "Error: Reference genome file is missing or does not exist."
   exit 1
 fi
 
-# Reference genome file check
-if [[ $REF == "" ]] || [[ ! -f "$REF" ]]; then
-  echo "Reference genome file is not specified or does not exist."
-  exit 1
-fi
+##############################
+# Define Processing Function #
+##############################
+# process_fastq_pair: Processes each pair of FASTQ files.
+#                     - Runs fastp to filter and merge reads if enabled
+#                     - Performs UMI error correction using umierrorcorrect
 
-# Define the processing function for parallel execution
 process_fastq_pair() {
     fq1="$1"
-    fq2="${fq1//R1/R2}"
-    sample_name=$(basename "${fq1//.fastq.gz/}")  # Only the filename part
+    fq2="${fq1//R1/R2}"                            # Identify the matching R2 file
+    sample_name=$(basename "${fq1//.fastq.gz/}")    # Extract sample name (filename without path or extension)
 
-    # Define full paths for input and output files
+    # Full paths for input files and output locations
     fq1_fullpath="$(realpath "$fq1")"
     fq2_fullpath="$(realpath "$fq2")"
     outfile="${sample_name}.merged.filtered.fastq.gz"
@@ -85,7 +102,7 @@ process_fastq_pair() {
 
     echo "Processing sample: $sample_name"
 
-    # Filtering with fastp if enabled
+    # Run fastp for filtering if enabled
     if $do_filtering; then
         fastp --in1="$fq1" --in2="$fq2" \
               --merge --merged_out="$outfile_fullpath" \
@@ -93,21 +110,21 @@ process_fastq_pair() {
               --unqualified_percent_limit="$percent_low_quality" \
               --thread=4
 
-        # Wait briefly to ensure fastp has completed
+        # Wait to ensure fastp completes file creation
         sleep 2
 
-        # Check if fastp completed successfully and produced the output file
+        # Verify fastp output file exists
         if [[ ! -f "$outfile_fullpath" ]]; then
-            echo "ERROR: fastp did not produce the expected output file: $outfile_fullpath"
-            echo "Skipping umierrorcorrect for $sample_name due to missing merged output."
+            echo "Error: fastp did not produce expected output file: $outfile_fullpath"
+            echo "Skipping umierrorcorrect for $sample_name."
             return 1
         fi
     else
-        # If filtering is disabled, use fq1_fullpath as outfile for compatibility
+        # If filtering is skipped, use fq1_fullpath directly
         outfile_fullpath="$fq1"
     fi
 
-    # Run umierrorcorrect if the outfile exists
+    # Run umierrorcorrect with the generated or original output file
     if [[ -f "$outfile_fullpath" ]]; then
         if $use_bed; then
             run_umierrorcorrect.py -o "$runDir/$sample_name" -r1 "$outfile_fullpath" -r "$REF" \
@@ -118,23 +135,36 @@ process_fastq_pair() {
                                    -mode single -ul "$umi_length" -sl "$spacer_length" -t "$threads"
         fi
     else
-        echo "ERROR: umierrorcorrect skipped as outfile is missing for sample $sample_name."
+        echo "Error: umierrorcorrect skipped as outfile is missing for sample $sample_name."
     fi
 }
 
-# Export function and necessary variables for parallel
+##################################
+# Export Function and Environment
+##################################
 export -f process_fastq_pair
 export runDir do_filtering use_bed umi_length spacer_length threads BED REF phred_score percent_low_quality
 
-# Use find and parallel to process all fastq.gz files containing R1 in subdirectories
+##################################
+# Process all R1 FASTQ Files in Parallel
+##################################
+# Finds all FASTQ files with R1 in the name in the specified directory and subdirectories
+# Runs the process_fastq_pair function for each file in parallel, up to the specified number of threads
+
 find "$runDir" -type f -name "*R1*.fastq.gz" | parallel -j "$threads" process_fastq_pair {}
 
-# Generate FastQC and MultiQC reports if tools are available
+##############################
+# Generate FastQC and MultiQC Reports
+##############################
+# Runs FastQC and MultiQC on processed files, generating summary reports
+
 mkdir -p "$runDir/qc_reports"
 if command -v fastqc &> /dev/null; then
-  echo "Running fastqc..."
+  echo "Running FastQC on all FASTQ files..."
   find "$runDir" -type f -name "*.fastq.gz" | xargs fastqc -o "$runDir/qc_reports"
 fi
 
 if command -v multiqc &> /dev/null; then
-  echo "Running multiqc"
+  echo "Running MultiQC..."
+  multiqc "$runDir" -o "$runDir/qc_reports"
+fi
