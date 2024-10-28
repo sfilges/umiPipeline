@@ -1,50 +1,67 @@
-## umiPipeline
-Pipeline for processing multiple fastq files and running UMIerrorcorrect.
- 
-### Dependencies
- 
-- UMIErrorCorrect
-- bwa
-- (optional) fastp
- 
-The tools can be installed from pip or conda, respectively:
- 
-```
- conda install -c bioconda bwa
- conda install -c bioconda fastp
- pip install umierrorcorrect
-```
- 
- ### Requirements
+# Batch Processing Script for Paired-End FASTQ Files
 
-- one or more fastq files
-- reference genome indexed with bwa
-- (recommended) bed file containing amplicon regions
- 
- ### Usage
- 
-For basic usage only a directory containing fastq files and an indexed reference genome need to be supplied. A bed file containing amplicon annotations is optional, but recommended.
+## Overview
 
-By default the pipeline assumes that fastq files are present as paired end files, i.e. two files per sample with one
-file containing "R1" and the corresponding "R2" in their file name.
+This is a batch processing script for paired-end FASTQ files, leveraging `fastp` and `umierrorcorrect` tools for quality filtering, UMI-based error correction, and quality control. The script organizes outputs, manages dependencies, and provides enhanced error handling and logging for streamlined bioinformatics workflows.
 
-```
-umi_pipeline.sh -i <path_to_fastq_dir> -r <reference_fasta> -b <optional_bed_file>
+## Features
+
+- **FASTQ Quality Filtering**: Uses `fastp` for quality filtering based on Phred scores and low-quality base percentage thresholds.
+- **UMI-based Error Correction**: Utilizes `umierrorcorrect` for precise error correction in UMI-tagged data.
+- **Parallel Processing**: Supports multi-threaded processing for efficient handling of large datasets.
+- **Quality Control**: Optionally generates FastQC and MultiQC reports for comprehensive quality assessment.
+- **Flexible Input**: Allows various input parameters like UMI length, reference genome, and BED file for assay regions.
+
+## Requirements
+
+- **Dependencies**: `fastp`, `run_umierrorcorrect.py`, `bwa`, `multiqc`, `fastqc`
+- **Shell**: Bash
+- **Operating System**: Linux/Unix environment
+
+The script checks for the presence of required dependencies and provides error messages if any are missing.
+
+## Usage
+
+The script accepts several command-line options for customization:
+
+```bash
+Usage: ./script.sh [options]
+
+Options:
+   -h, --help                  Display help message.
+   -i, --input-dir             Input directory containing FASTQ files. Default is the current directory.
+   -b, --bed                   Path to the assay regions BED file for umierrorcorrect.
+   -r, --reference             Path to the indexed reference genome.
+   -u, --umi_length            Length of the Unique Molecular Identifier (UMI). Default is 12.
+   -s, --spacer_length         Spacer sequence length between reads. Default is 16.
+   -t, --threads               Number of parallel jobs to run. Default is 4.
+   -f, --no_filtering          Skip `fastp` filtering step.
+   -q, --phred_score           Minimum Phred score for fastp quality filtering. Default is 20.
+   -p, --percent_low_quality   Max percentage of low-quality bases per read. Default is 40.
+   --skip-fastqc               Skip FastQC quality control.
+   --skip-multiqc              Skip MultiQC report generation.
 ```
 
-If fastp is installed (recommended) it will automatically be used to trim adapters and perform quality filtering. Fastp will also merge
-R1 and R2 and perform error correction on the overlap region. An html report will be generated for each input fastq.
+# Installation
 
-A number of optional flags can be set to modify the behaviour of fastp:
-```
- -f  Do not perform filtering
- -q  Phred score threshold for filtering, default is 20.
- -p  Percent of reads that are allowed to have poor quality. Default is 40 (0-100).
+Clone the repository or download the script.
+
+Ensure dependencies (fastp, umierrorcorrect, bwa, multiqc, fastqc) are installed and accessible in your PATH.
+
+Make the script executable:
+
+```bash
+chmod +x script.sh
 ```
 
-For each fastq/sample a folder will be generated into which umierrorcorrect outputs will be redirected. Similarl to fastp, the arguments passed to UMIerrorocorrect can also be adjusted:
+# Example
+
+To process FASTQ files in the current directory, applying UMI-based error correction with default parameters:
+
+```bash
+./script.sh -i /path/to/fastq/files -r /path/to/reference/genome.fa -t 8
 ```
- -u <UMI length> Integer, default is 19.
- -s <Spacer length> Integer, default is 16.
- -t <Threads> Integer, default is 16.
-```
+
+# Error handling
+
+Logs are saved in script_log.txt to record the processing of each file, error messages, and status of dependencies. The script terminates if any critical errors (like missing dependencies) occur.
