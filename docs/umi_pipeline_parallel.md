@@ -32,7 +32,7 @@ Options:
    -i, --input-dir             Input directory containing FASTQ files. Default is the current directory.
    -b, --bed                   Path to the assay regions BED file for umierrorcorrect.
    -r, --reference             Path to the indexed reference genome.
-   -u, --umi_length            Length of the Unique Molecular Identifier (UMI). Default is 12.
+   -u, --umi_length            Length of the Unique Molecular Identifier or UMI. Default is 19.
    -s, --spacer_length         Spacer sequence length between reads. Default is 16.
    -t, --threads               Number of parallel jobs to run. Default is 4.
    -f, --no_filtering          Skip `fastp` filtering step.
@@ -56,11 +56,13 @@ chmod +x script.sh
 
 # Example
 
-To process FASTQ files in the current directory, applying UMI-based error correction with default parameters:
+To process FASTQ files in a specific directory, applying UMI-based error correction with default parameters:
 
 ```bash
 ./script.sh -i /path/to/fastq/files -r /path/to/reference/genome.fa -t 8
 ```
+
+Note, that the reference genome needs bwa indexed!
 
 # Error handling
 

@@ -14,9 +14,9 @@ display_help() {
     echo "   -i, --input-dir             Input directory containing FASTQ files. Default is the current directory."
     echo "   -b, --bed                   Path to the assay regions BED file for umierrorcorrect."
     echo "   -r, --reference             Path to the indexed reference genome."
-    echo "   -u, --umi_length            Length of the Unique Molecular Identifier (UMI). Default is 12."
+    echo "   -u, --umi_length            Length of the Unique Molecular Identifier (UMI). Default is 19."
     echo "   -s, --spacer_length         Spacer sequence length between reads. Default is 16."
-    echo "   -t, --threads               Number of parallel jobs to run. Default is 4."
+    echo "   -t, --threads               Number of parallel jobs to run. Default is 8."
     echo "   -f, --no_filtering          Skip fastp filtering step for FASTQ files."
     echo "   -q, --phred_score           Minimum Phred score threshold for fastp quality filtering. Default is 20."
     echo "   -p, --percent_low_quality   Maximum percentage of low-quality bases per read. Default is 40."
@@ -31,7 +31,7 @@ display_help() {
 ##########################
 umi_length=19
 spacer_length=16
-threads=4
+threads=8
 do_filtering=true
 use_bed=false
 phred_score=20
