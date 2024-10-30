@@ -31,7 +31,7 @@ display_help() {
 ##########################
 umi_length=19
 spacer_length=16
-threads=8
+threads=$(($(nproc) / 2))
 do_filtering=true
 use_bed=false
 phred_score=20
@@ -169,7 +169,7 @@ process_fastq_pair() {
 export -f process_fastq_pair log_msg run_fastp run_umierrorcorrect
 export runDir FILTERED_DIR UMI_CORRECTED_DIR TEMP_DIR do_filtering use_bed umi_length spacer_length threads BED REF phred_score percent_low_quality
 
-find "$runDir" -type f -name "*R1*.fastq.gz" | parallel -j "$threads" process_fastq_pair {}
+find "$runDir" -type f -name "*R1*.fastq.gz" | parallel --joblog "$runDir/job.log" -j "$threads" process_fastq_pair {}
 
 ##############################
 # Quality Control with FastQC and MultiQC
