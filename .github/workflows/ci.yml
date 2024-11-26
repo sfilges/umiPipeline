@@ -1,0 +1,69 @@
+name: CI for UMI Processing Script
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          shellcheck \
+          parallel \
+          fastp \
+          bwa \
+          fastqc \
+          multiqc
+    
+    - name: Lint with ShellCheck
+      run: |
+        shellcheck bin/umi_processing_script.sh
+    
+    - name: Install Python dependencies
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install Python packages
+      run: |
+        pip install \
+          umierrorcorrect \
+          pytest
+    
+    - name: Create test data
+      run: |
+        mkdir -p test_data
+        # Generate mock FASTQ files for testing
+        for i in {1..2}; do
+          zcat /dev/zero | tr '\0' '\141' | head -c 1000000 > test_data/sample_R1_001.fastq
+          zcat /dev/zero | tr '\0' '\141' | head -c 1000000 > test_data/sample_R2_001.fastq
+          gzip test_data/sample_R1_001.fastq
+          gzip test_data/sample_R2_001.fastq
+        done
+    
+    - name: Run script with test data
+      run: |
+        bash bin/umi_processing_script.sh \
+          -i test_data \
+          -r /path/to/reference/genome \
+          -t 2 \
+          --skip-fastqc \
+          --skip-multiqc
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: processing-logs
+        path: |
+          script_log.txt
+          job.log
