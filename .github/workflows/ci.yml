@@ -45,10 +45,12 @@ jobs:
         mkdir -p test_data
         # Generate mock FASTQ files for testing
         for i in {1..2}; do
-          zcat /dev/zero | tr '\0' '\141' | head -c 1000000 > test_data/sample_R1_001.fastq
-          zcat /dev/zero | tr '\0' '\141' | head -c 1000000 > test_data/sample_R2_001.fastq
-          gzip test_data/sample_R1_001.fastq
-          gzip test_data/sample_R2_001.fastq
+          # Create mock FASTQ content with proper format
+          echo -e "@read$i\nACGTACGT\n+\nIIIIIIII" > test_data/sample_R1_001.fastq
+          echo -e "@read$i\nTGCATGCA\n+\nIIIIIIII" > test_data/sample_R2_001.fastq
+          # Compress the files
+          gzip -f test_data/sample_R1_001.fastq
+          gzip -f test_data/sample_R2_001.fastq
         done
         # Create a small test reference genome
         echo ">chr1" > test_data/test_reference.fa
