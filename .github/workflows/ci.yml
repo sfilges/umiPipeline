@@ -27,7 +27,7 @@ jobs:
     
     - name: Lint with ShellCheck
       run: |
-        shellcheck bin/umi_processing_script.sh
+        shellcheck bin/umi_pipeline_parallel.sh
     
     - name: Install Python dependencies
       uses: actions/setup-python@v4
