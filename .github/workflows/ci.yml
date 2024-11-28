@@ -50,12 +50,16 @@ jobs:
           gzip test_data/sample_R1_001.fastq
           gzip test_data/sample_R2_001.fastq
         done
+        # Create a small test reference genome
+        echo ">chr1" > test_data/test_reference.fa
+        head -c 1000000 /dev/urandom | LC_ALL=C tr -dc 'ACGT' >> test_data/test_reference.fa
+        bwa index test_data/test_reference.fa
     
     - name: Run script with test data
       run: |
-        bash bin/umi_processing_script.sh \
+        bash bin/umi_pipeline_parallel.sh \
           -i test_data \
-          -r /path/to/reference/genome \
+          -r test_data/test_reference.fa \
           -t 2 \
           --skip-fastqc \
           --skip-multiqc
