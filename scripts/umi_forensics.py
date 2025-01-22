@@ -5,6 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 import re
+import multiprocessing
+from functools import partial
 
 def find_fastq_pairs(input_dir):
     """Find all FASTQ files and pair them based on R1/R2 naming convention."""
@@ -29,6 +31,35 @@ def find_fastq_pairs(input_dir):
     
     return fastq_files
 
+def process_sample(args_dict, sample, files):
+    """Process a single sample with the given parameters."""
+    cmd = ['run_umierrorcorrect_forensics.py']
+    
+    if files['R1'] is None:
+        print(f"Warning: No R1 file found for sample {sample}, skipping...")
+        return
+        
+    cmd.extend(['-r1', files['R1']])
+    
+    if files['R2']:
+        cmd.extend(['-r2', files['R2'], '-p'])
+    
+    cmd.extend([
+        '-o', args_dict['output'],
+        '-g', args_dict['genome'],
+        '-i', args_dict['ini'],
+        '-l', args_dict['library'],
+        '-b', args_dict['bed']
+    ])
+    
+    print(f"Processing sample: {sample}")
+    print(f"Running command: {' '.join(cmd)}")
+    
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error processing sample {sample}: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description='Run UMI error correction on FASTQ files')
     parser.add_argument('-i', '--input_dir', required=True, help='Input directory containing FASTQ files')
@@ -37,6 +68,8 @@ def main():
     parser.add_argument('-n', '--ini', required=True, help='INI file')
     parser.add_argument('-l', '--library', required=True, help='Library file')
     parser.add_argument('-b', '--bed', required=True, help='BED file with regions')
+    parser.add_argument('-t', '--threads', type=int, default=multiprocessing.cpu_count(),
+                      help='Number of parallel processes (default: number of CPU cores)')
     
     args = parser.parse_args()
     
@@ -46,34 +79,21 @@ def main():
     # Find all FASTQ files and their pairs
     fastq_pairs = find_fastq_pairs(args.input_dir)
     
-    for sample, files in fastq_pairs.items():
-        cmd = ['run_umierrorcorrect_forensics.py']
-        
-        if files['R1'] is None:
-            print(f"Warning: No R1 file found for sample {sample}, skipping...")
-            continue
-            
-        cmd.extend(['-r1', files['R1']])
-        
-        # If R2 exists, add it to command with -p flag
-        if files['R2']:
-            cmd.extend(['-r2', files['R2'], '-p'])
-        
-        cmd.extend([
-            '-o', args.output,
-            '-g', args.genome,
-            '-i', args.ini,
-            '-l', args.library,
-            '-b', args.bed
-        ])
-        
-        print(f"Processing sample: {sample}")
-        print(f"Running command: {' '.join(cmd)}")
-        
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Error processing sample {sample}: {e}")
+    # Create a dictionary of arguments to pass to process_sample
+    args_dict = {
+        'output': args.output,
+        'genome': args.genome,
+        'ini': args.ini,
+        'library': args.library,
+        'bed': args.bed
+    }
+    
+    # Create a partial function with the args_dict
+    process_func = partial(process_sample, args_dict)
+    
+    # Run the processing in parallel
+    with multiprocessing.Pool(processes=args.threads) as pool:
+        pool.starmap(process_func, fastq_pairs.items())
 
 if __name__ == '__main__':
     main()
