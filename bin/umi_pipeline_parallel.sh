@@ -22,6 +22,7 @@ display_help() {
     echo "   -p, --percent_low_quality   Maximum percentage of low-quality bases per read. Default is 40."
     echo "   --skip-fastqc               Skip FastQC quality control."
     echo "   --skip-multiqc              Skip MultiQC report generation."
+    echo "   --merge                     Merge reads before umierrorcorrect."
     echo
     exit 1
 }
@@ -38,6 +39,7 @@ phred_score=20
 percent_low_quality=40
 skip_fastqc=false
 skip_multiqc=false
+merge_reads=false
 
 ######################
 # Parse Command-Line Options
@@ -56,6 +58,7 @@ while [[ "$#" -gt 0 ]]; do
     -p|--percent_low_quality) percent_low_quality="$2"; shift ;;
     --skip-fastqc) skip_fastqc=true ;;
     --skip-multiqc) skip_multiqc=true ;;
+    --merge) merge_reads=true ;;
     *) echo "Unknown option: $1" ; display_help ;;
   esac
   shift
@@ -117,29 +120,71 @@ run_fastp() {
     local fq1="$1"
     local fq2="$2"
     local outfile="$3"
+    local sample_name="$4"
+    local length_required="$5"
 
     log_msg "Running fastp for files $fq1 and $fq2"
-    fastp --in1="$fq1" --in2="$fq2" \
-          --merge --merged_out="$outfile" \
-          --qualified_quality_phred="$phred_score" \
-          --unqualified_percent_limit="$percent_low_quality" \
-          --thread=$((threads / 2)) || {
-        log_msg "Error: fastp failed for $fq1 and $fq2"
-        return 1
-    }
+    if $merge_reads; then
+        fastp --in1="$fq1" --in2="$fq2" \
+              --merge --merged_out="$outfile" \
+              --qualified_quality_phred="$phred_score" \
+              --unqualified_percent_limit="$percent_low_quality" \
+              --trim_poly_g --trim_poly_x \
+              --length_required="$length_required" \
+              --thread=$((threads / 2)) || {
+            log_msg "Error: fastp failed for $fq1 and $fq2"
+            return 1
+        }
+    else
+        local out1="$FILTERED_DIR/${sample_name}.filtered.R1.fastq.gz"
+        local out2="$FILTERED_DIR/${sample_name}.filtered.R2.fastq.gz"
+        fastp --in1="$fq1" --in2="$fq2" \
+              --out1="$out1" --out2="$out2" \
+              --qualified_quality_phred="$phred_score" \
+              --unqualified_percent_limit="$percent_low_quality" \
+              --trim_poly_g --trim_poly_x \
+              --length_required="$length_required" \
+              --thread=$((threads / 2)) || {
+            log_msg "Error: fastp failed for $fq1 and $fq2"
+            return 1
+        }
+        echo "$out1:$out2"  # Return both output files
+    fi
 }
 
 run_umierrorcorrect() {
-    local outfile="$1"
-    local sample_name="$2"
+    local r1="$1"
+    local r2="$2"
+    local sample_name="$3"
+    local single_mode="$4"
 
     log_msg "Running umierrorcorrect for sample $sample_name"
-    run_umierrorcorrect.py -o "$UMI_CORRECTED_DIR/$sample_name" -r1 "$outfile" -r "$REF" \
-                           -mode single -ul "$umi_length" -sl "$spacer_length" \
-                           ${use_bed:+-bed "$BED"} -t "$threads" || {
-        log_msg "Error: umierrorcorrect failed for $sample_name"
-        return 1
-    }
+    if [ "$single_mode" = true ]; then
+        run_umierrorcorrect.py -o "$UMI_CORRECTED_DIR/$sample_name" \
+                              -r1 "$r1" \
+                              -r "$REF" \
+                              -mode single \
+                              -ul "$umi_length" \
+                              -sl "$spacer_length" \
+                              ${use_bed:+-bed "$BED"} \
+                              -t "$threads" || {
+            log_msg "Error: umierrorcorrect failed for $sample_name"
+            return 1
+        }
+    else
+        run_umierrorcorrect.py -o "$UMI_CORRECTED_DIR/$sample_name" \
+                              -r1 "$r1" \
+                              -r2 "$r2" \
+                              -r "$REF" \
+                              -mode paired \
+                              -ul "$umi_length" \
+                              -sl "$spacer_length" \
+                              ${use_bed:+-bed "$BED"} \
+                              -t "$threads" || {
+            log_msg "Error: umierrorcorrect failed for $sample_name"
+            return 1
+        }
+    fi
 }
 
 process_fastq_pair() {
@@ -147,27 +192,36 @@ process_fastq_pair() {
     fq2="${fq1//R1/R2}"
     sample_name=$(basename "${fq1//.fastq.gz/}")
 
-    # Define output paths
-    outfile="$FILTERED_DIR/${sample_name}.merged.filtered.fastq.gz"
+    # Define all output paths
+    if $merge_reads; then
+        outfile="$FILTERED_DIR/${sample_name}.merged.filtered.fastq.gz"
+    else
+        filtered_r1="$FILTERED_DIR/${sample_name}.filtered.R1.fastq.gz"
+        filtered_r2="$FILTERED_DIR/${sample_name}.filtered.R2.fastq.gz"
+    fi
 
     log_msg "Processing sample: $sample_name"
 
     # Run fastp if filtering is enabled
     if $do_filtering; then
-        run_fastp "$fq1" "$fq2" "$outfile" || return 1
+        if $merge_reads; then
+            run_fastp "$fq1" "$fq2" "$outfile" "$sample_name" 100 || return 1
+            run_umierrorcorrect "$outfile" "" "$sample_name" true || return 1
+        else
+            run_fastp "$fq1" "$fq2" "" "$sample_name" 100 || return 1
+            run_umierrorcorrect "$filtered_r1" "$filtered_r2" "$sample_name" false || return 1
+        fi
     else
-        outfile="$fq1"  # Use original file if filtering is disabled
+        run_umierrorcorrect "$fq1" "$fq2" "$sample_name" false || return 1
     fi
-
-    # Run umierrorcorrect
-    run_umierrorcorrect "$outfile" "$sample_name" || return 1
 }
 
 ######################
 # Export and Run Parallel Processing
 ######################
 export -f process_fastq_pair log_msg run_fastp run_umierrorcorrect
-export runDir FILTERED_DIR UMI_CORRECTED_DIR TEMP_DIR do_filtering use_bed umi_length spacer_length threads BED REF phred_score percent_low_quality
+export runDir FILTERED_DIR UMI_CORRECTED_DIR TEMP_DIR do_filtering use_bed umi_length \
+       spacer_length threads BED REF phred_score percent_low_quality merge_reads
 
 find "$runDir" -type f -name "*R1*.fastq.gz" | parallel --joblog "$runDir/job.log" -j "$threads" process_fastq_pair {}
 
