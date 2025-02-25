@@ -1,0 +1,49 @@
+################## BASE IMAGE ######################
+FROM ubuntu:22.04
+
+################## METADATA ######################
+LABEL base.image="ubuntu:22.04"
+LABEL version="1"
+LABEL software="umierrorcorrect"
+LABEL software.version="v0.29"
+LABEL about.summary="Umi error correct pipeline"
+LABEL about.tags="Genomics"
+
+# Add umierrorcorrect download from github to container in /usr/local/src
+ADD https://github.com/stahlberggroup/umierrorcorrect/archive/refs/tags/v0.29.tar.gz /usr/local/src/
+
+# Update Ubuntu Software repository and install dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    make \
+    curl \
+    libbz2-dev \
+    liblzma-dev \
+    libz-dev \
+    libxml2-dev \
+    libcurl4-openssl-dev \
+    bzip2 \
+    xz-utils \
+    gcc \
+    g++ \
+    python3-dev \
+    python3-pip \
+    python3-setuptools \
+    pigz \
+    bwa \
+    && pip3 install wheel \
+    && pip3 install Cython \
+    && pip3 install pysam \
+    && pip3 install scipy \
+    && pip3 install matplotlib \
+    #&& pip3 install umierrorcorrect
+    && cd /usr/local/src/ \
+    && tar -xzf v0.29.tar.gz \
+    && cd umierrorcorrect-0.29 \
+    && pip3 install .
+
+# Set the working directory
+WORKDIR /usr/local/src/umierrorcorrect-0.29
+
+# Command to run the software
+#CMD ["run_umierrorcorrect.py", "--help"]
